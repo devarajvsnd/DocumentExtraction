@@ -1,0 +1,8 @@
+qwen_vl_utils
+#git+https://github.com/huggingface/transformers
+accelerate
+
+torch-snippets
+pandas
+numpy
+transformers
