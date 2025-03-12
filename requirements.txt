@@ -5,4 +5,12 @@ accelerate
 torch-snippets
 pandas
 numpy
+
+
+torch
 transformers
+streamlit
+pillow
+pandas
+openai
+google-auth
