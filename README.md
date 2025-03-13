@@ -30,6 +30,11 @@ Over the course of development, multiple approaches were tested for document pro
 - **Streamlit**: For the user interface.
 - **Python**: Core programming language.
 
+
+![Alt text](images/OP1.png)
+
+![Alt text](images/OP.png)
+
 ## 🏗️ Installation & Setup
 
 ```
