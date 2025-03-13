@@ -1,14 +1,30 @@
-import torch
-from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
-from PIL import Image, UnidentifiedImageError
 import os
 import json
+import re
+import torch
+import pandas as pd
 import numpy as np
 from pathlib import Path as P
 from config import INPUT_DIR, OUTPUT_DIR
 from logger import logger
 from qwen_vl_utils import process_vision_info
-from torch_snippets import P, np
+from torch_snippets.adapters import np_2_b64
+from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
+from PIL import Image, UnidentifiedImageError
+from torch_snippets import (
+    read,
+    resize,
+    Info,
+    in_debug_mode,
+    show,
+    P,
+    np,
+    PIL,
+    Warn,
+    ifnone,
+)
+
+torch.classes.__path__ = [] 
 
 # Load the model and tokenizer
 model_name = "Qwen/Qwen2-VL-2B-Instruct"
@@ -16,7 +32,7 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 try:
     #tokenizer = AutoTokenizer.from_pretrained(model_name)
     #model = AutoModelForCausalLM.from_pretrained(model_name).to("cuda")
-    model = Qwen2VLForConditionalGeneration.from_pretrained(model_name, torch_dtype="auto", device_map="auto")
+    model = Qwen2VLForConditionalGeneration.from_pretrained(model_name, torch_dtype="auto", device_map=device)
     min_pixels = 256 * 28 * 28
     max_pixels = 1280 * 28 * 28
     processor = AutoProcessor.from_pretrained(model_name, min_pixels=min_pixels, max_pixels=max_pixels )
@@ -29,33 +45,69 @@ def path_2_b64(path, image_size=None):
     Convert an image path or PIL image to a base64-encoded string.
     """
     try:
-        if isinstance(path, (str, P)):
-            image = Image.open(path)
-            image_type = f"image/{P(path).suffix[1:]}"  # Extract file extension
-        elif isinstance(path, Image.Image):
-            image = path
-            image_type = "image/jpeg"
-        else:
-            raise NotImplementedError(f"Unsupported input type: {type(path)}")
         
-        # Resize image if required
+        if isinstance(path, (str, P)):
+            image = read(path)
+            image_type = f"image/{P(path).extn}"
+        elif isinstance(path, PIL.Image.Image):
+            image = np.array(path)
+            image_type = f"image/jpeg"
+        else:
+            raise NotImplementedError(f"Yet to implement for {type(path)}")
         if image_size:
             if isinstance(image_size, int):
                 image_size = (image_size, image_size)
-            image = image.resize(image_size)
-        
-        # Convert image to base64
-        import base64
-        from io import BytesIO
-        buffered = BytesIO()
-        image.save(buffered, format=image_type.split("/")[-1])
-        img_b64_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
-        
-        return img_b64_str, image_type
-    
+            image = resize(image, ("at-most", image_size))
+        if in_debug_mode():
+            Info(f"{image.shape=}")
+            show(image)
+        return np_2_b64(image), image_type
+   
     except Exception as e:
         logger.error(f"Error in path_2_b64: {e}")
         raise
+
+
+def clean_and_validate_data(invoice_data):
+    """
+    Clean and validate the extracted invoice data.
+    """
+    cleaned_data = {}
+    
+    # Clean and validate invoice number
+    if "invoice_number" in invoice_data:
+        cleaned_data["invoice_number"] = re.sub(r'[\\/*?:"<>|]', "", invoice_data["invoice_number"]).strip()
+        # Remove trailing commas and dots
+        cleaned_data["invoice_number"] = cleaned_data["invoice_number"].rstrip(".,")
+    else:
+        cleaned_data["invoice_number"] = "N/A"
+    
+    # Clean and validate date
+    if "date" in invoice_data:
+        cleaned_data["date"] = re.sub(r'[\\/*?:"<>|]', "", invoice_data["date"]).strip()
+        # Remove trailing commas and dots
+        cleaned_data["date"] = cleaned_data["date"].rstrip(".,")
+    else:
+        cleaned_data["date"] = "N/A"
+    
+    # Clean and validate total amount
+    if "total_amount" in invoice_data:
+        cleaned_data["total_amount"] = re.sub(r'[^0-9.]', "", invoice_data["total_amount"]).strip()
+        # Remove trailing commas and dots
+        cleaned_data["total_amount"] = cleaned_data["total_amount"].rstrip(".,")
+    else:
+        cleaned_data["total_amount"] = "N/A"
+    
+    # Clean and validate vendor name
+    if "vendor_name" in invoice_data:
+        cleaned_data["vendor_name"] = re.sub(r'[\\/*?:"<>|]', "", invoice_data["vendor_name"]).strip()
+        # Remove trailing commas and dots
+        cleaned_data["vendor_name"] = cleaned_data["vendor_name"].rstrip(".,")
+    else:
+        cleaned_data["vendor_name"] = "Unknown Vendor"
+    
+    return cleaned_data
+
 
 def predict(image, prompt, max_new_tokens=1024):
     """
@@ -63,6 +115,8 @@ def predict(image, prompt, max_new_tokens=1024):
     """
     try:
         img_b64_str, image_type = path_2_b64(image)
+        logger.info("Image converted to array")
+
         messages = [
             {
                 "role": "user",
@@ -78,7 +132,7 @@ def predict(image, prompt, max_new_tokens=1024):
 
         # Preparation for inference
         text = processor.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True    )
+        messages, tokenize=False, add_generation_prompt=True)
         image_inputs, video_inputs = process_vision_info(messages)
         inputs =processor(
         text=[text],
@@ -87,11 +141,11 @@ def predict(image, prompt, max_new_tokens=1024):
         padding=True,
         return_tensors="pt",
         )
-
+        
         inputs = inputs.to(device)
         # Inference: Generation of the output
-
         generated_ids= model.generate(**inputs, max_new_tokens=max_new_tokens)
+        logger.info("Ids generated")
         generated_ids_trimmed = [
             out_ids[len(in_ids) :]
             for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
@@ -106,6 +160,7 @@ def predict(image, prompt, max_new_tokens=1024):
     except Exception as e:
         logger.error(f"Error in predict: {e}")
         raise
+
 
 def extract_invoice_data(image_path):
     """
@@ -152,11 +207,12 @@ Return the details in JSON format."""
         logger.error(f"Error processing {image_path}: {e}")
         return None
 
+
 def process_invoices(input_dir, output_dir):
     """
-    Process all invoices in the input directory and save results.
+    Process all invoices in the input directory and save results to a dataframe.
     """
-    results = {}
+    results = []
     try:
         if not os.path.exists(input_dir):
             logger.error(f"Input directory does not exist: {input_dir}")
@@ -166,21 +222,19 @@ def process_invoices(input_dir, output_dir):
             if filename.lower().endswith((".png", ".jpg", ".jpeg")):
                 image_path = os.path.join(input_dir, filename)
                 invoice_data = extract_invoice_data(image_path)
-                if invoice_data and invoice_data["vendor_name"]:
-                    vendor = invoice_data["vendor_name"]
-                    if vendor not in results:
-                        results[vendor] = []
-                    results[vendor].append(invoice_data)
+                if invoice_data:
+                    cleaned_data = clean_and_validate_data(invoice_data)
+                    results.append(cleaned_data)
         
-        # Save results to output directory
-        for vendor, invoices in results.items():
-            vendor_dir = os.path.join(output_dir, vendor)
-            os.makedirs(vendor_dir, exist_ok=True)
-            with open(os.path.join(vendor_dir, "invoices.json"), "w") as f:
-                json.dump(invoices, f, indent=4)
+        # Create a dataframe from the results
+        df = pd.DataFrame(results)
         
-        logger.info(f"Processed {len(results)} vendors.")
-        return results
+        # Save the dataframe to a CSV file
+        output_file = os.path.join(output_dir, "invoices.csv")
+        df.to_csv(output_file, index=False)
+        
+        logger.info(f"Processed {len(df)} invoices.")
+        return df
     
     except Exception as e:
         logger.error(f"Error processing invoices: {e}")
