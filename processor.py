@@ -1,5 +1,4 @@
 import os
-import json
 import re
 import torch
 import pandas as pd
@@ -20,8 +19,6 @@ from torch_snippets import (
     P,
     np,
     PIL,
-    Warn,
-    ifnone,
 )
 
 torch.classes.__path__ = [] 
@@ -29,9 +26,8 @@ torch.classes.__path__ = []
 # Load the model and tokenizer
 model_name = "Qwen/Qwen2-VL-2B-Instruct"
 device = "cuda" if torch.cuda.is_available() else "cpu"
+
 try:
-    #tokenizer = AutoTokenizer.from_pretrained(model_name)
-    #model = AutoModelForCausalLM.from_pretrained(model_name).to("cuda")
     model = Qwen2VLForConditionalGeneration.from_pretrained(model_name, torch_dtype="auto", device_map=device)
     min_pixels = 256 * 28 * 28
     max_pixels = 1280 * 28 * 28
@@ -39,6 +35,7 @@ try:
 except Exception as e:
     logger.error(f"Failed to load model or tokenizer: {e}")
     raise
+
 
 def path_2_b64(path, image_size=None):
     """
@@ -161,7 +158,6 @@ def predict(image, prompt, max_new_tokens=1024):
         logger.error(f"Error in predict: {e}")
         raise
 
-
 def extract_invoice_data(image_path):
     """
     Extract invoice data from an image using the Qwen model.
@@ -206,7 +202,6 @@ Return the details in JSON format."""
     except Exception as e:
         logger.error(f"Error processing {image_path}: {e}")
         return None
-
 
 def process_invoices(input_dir, output_dir):
     """

@@ -4,7 +4,6 @@ torch-snippets[torch,pdf]
 pandas
 numpy
 streamlit
-#torch>=1.7.0
 transformers
 Pillow
 requests
